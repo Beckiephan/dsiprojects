@@ -23,14 +23,12 @@ If you want to, it's great to use relative links to direct your audience to vari
 |Feature|Type|Dataset|Description|
 |---|---|---|---|
 |**state**|*object*|act_2017<br>sat_2017|The states in which the participation rates and scores are being recorded for.|
-<br>
 |**act17_par_percentage**|*float*|act_2017|Average 2017 ACT percentage rate for each State.|
 |**act17_english**|*float*|act_2017|Average 2017 ACT English scaled score for each State.|
 |**act17_math**|*float*|act_2017|Average 2017 ACT Math scaled score for each State.|
 |**act17_reading**|*float*|act_2017|Average 2017 ACT scaled Reading score for each State.|
 |**act17_science**|*float*|act_2017|Average 2017 ACT scaled Science score for each State.|
 |**act17_composite**|*float*|act_2017|Average 2017 ACT scaled Composite score, which is the average of all individual subject score for each State.|
-<br>
 |**sat17_par_percentage**|*float*|sat_2017|Average 2017 SAT percentage rate for each State.|
 |**sat17_erw**|*integer*|sat_2017|Average 2017 SAT English-based Reading and Writing score for each State.|
 |**sat17_math**|*integer*|sat_2017|Average 2017 SAT Math score for each State.|
@@ -40,14 +38,12 @@ If you want to, it's great to use relative links to direct your audience to vari
 |Feature|Type|Dataset|Description|
 |---|---|---|---|
 |**state**|*object*|act_2018<br>sat_2018|The states in which the 2018 ACT and SAT participation rates and scores are being recorded for.|
-<br>
 |**act18_par_percentage**|*float*|act_2018|Average 2018 ACT percentage rate for each State.|
 |**act18_english**|*float*|act_2018|Average 2018 ACT English scaled score for each State.|
 |**act18_math**|*float*|act_2018|Average 2018 ACT Math scaled score for each State.|
 |**act18_reading**|*float*|act_2018|Average 2018 ACT scaled Reading score for each State.|
 |**act18_science**|*float*|act_2018|Average 2018 ACT scaled Science score for each State.|
 |**act18_composite**|*float*|act_2018|Average 2018 ACT scaled Composite score, which is the average of all individual subject score for each State.|
-<br>
 |**sat18_par_percentage**|*float*|sat_2018|Average 2018 SAT percentage rate for each State.|
 |**sat18_erw**|*integer*|sat_2018|Average 2018 SAT English-based Reading and Writing score for each State.|
 |**sat18_math**|*integer*|sat_2018|Average 2018 SAT Math score for each State.|

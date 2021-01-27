@@ -1,0 +1,2846 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Notebook 2: Capstone Project - Instacart"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Problem Statement\n",
+    "\n",
+    "Instacart being a grocery delivery and pick-up service, offers its services through the website and mobile app. Being an e-commerce business especially now, during the Covid period, it is important to maintain user experience and ease in finding products on their online store. As a data analyst with Instacart, it has come to our attention that there are quite a lot of missing information of which department and aisles a product belongs to. As products are categorized into departments, users could search for products by departments. With missing departments, those products would not appear if users were to search by department. To solve this problem, we will build a model that would automatically take the product name and map them to their most likely department which would ensure all items are mapped to their most closely related department. This would not only ease users search for items and prevent any omission of products if users search by departments, which may result in higher sales as well, it would give a more complete and organized inventory and help make reporting more efficient, complete and accurate, for example, reporting the department-wise sales. "
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Executive Summary\n",
+    "\n",
+    "### Contents\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:01:05.913691Z",
+     "start_time": "2021-01-27T08:01:05.899616Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "#import all the libraries\n",
+    "import pandas as pd\n",
+    "import numpy as np\n",
+    "import matplotlib.pyplot as plt\n",
+    "import seaborn as sns\n",
+    "import pickle\n",
+    "from tqdm import tqdm\n",
+    "import sklearn\n",
+    "\n",
+    "import nltk\n",
+    "from nltk import word_tokenize\n",
+    "from nltk.corpus import stopwords as stops\n",
+    "from sklearn.neighbors import KNeighborsClassifier\n",
+    "from sklearn.model_selection import GridSearchCV, cross_val_score, train_test_split\n",
+    "from sklearn.metrics import r2_score, confusion_matrix, plot_roc_curve\n",
+    "from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer\n",
+    "from sklearn.feature_selection import SelectKBest, chi2\n",
+    "from sklearn.linear_model import LogisticRegression\n",
+    "from sklearn.naive_bayes import MultinomialNB, GaussianNB\n",
+    "from sklearn.ensemble import RandomForestClassifier\n",
+    "from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score\n",
+    "from sklearn.metrics import confusion_matrix, plot_confusion_matrix, classification_report\n",
+    "from imblearn.pipeline import Pipeline\n",
+    "from gensim.models.doc2vec import Doc2Vec, TaggedDocument\n",
+    "import multiprocessing\n",
+    "from sklearn.base import BaseEstimator\n",
+    "from tensorflow.keras.layers import LSTM, Dense, Flatten\n",
+    "from tensorflow.keras.models import Sequential\n",
+    "from keras.layers.embeddings import Embedding\n",
+    "from MulticoreTSNE import MulticoreTSNE as tsne\n",
+    "from imblearn.under_sampling import NeighbourhoodCleaningRule\n",
+    "from tensorflow.keras.preprocessing.sequence import pad_sequences\n",
+    "from keras.preprocessing.text import Tokenizer\n",
+    "from tensorflow.keras import utils\n",
+    "from keras import layers\n",
+    "from plot_keras_history import plot_history\n",
+    "from tensorflow.python.keras.callbacks import History\n",
+    "\n",
+    "\n",
+    "%matplotlib inline\n",
+    "\n",
+    "pd.set_option('display.max_columns', None)\n",
+    "pd.set_option('display.max_rows', None)\n",
+    "\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:01:06.002123Z",
+     "start_time": "2021-01-27T08:01:05.915646Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "## Loading the clean products csv\n",
+    "products_df = pd.read_csv('../datasets/products_df.csv')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 5,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:01:06.008675Z",
+     "start_time": "2021-01-27T08:01:06.004561Z"
+    }
+   },
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "(49688, 9)"
+      ]
+     },
+     "execution_count": 5,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "products_df.shape"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "For this problem, we will be working with 67 out of the 134 aisles due to computational limitations. We will take the more well represented aisles, with at least 305 products in each aisle. In this case, we did not use SMOTEENN as we will just be created artificial samples of each minority classes by over-sampling and we may be taking away some information by under-sampling."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 6,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:01:06.015888Z",
+     "start_time": "2021-01-27T08:01:06.010620Z"
+    }
+   },
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "20"
+      ]
+     },
+     "execution_count": 6,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "products_df['department_name'].nunique()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Preparing Train and Test sets"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 7,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:01:06.025043Z",
+     "start_time": "2021-01-27T08:01:06.017539Z"
+    },
+    "scrolled": true
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "(49688, 9)\n",
+      "(1258, 9)\n"
+     ]
+    }
+   ],
+   "source": [
+    "print(products_df.shape)\n",
+    "print(products_df[products_df['department_name']=='missing'].shape)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Training and validation of the model will be done on a set of data that have their relative department name, we will do a train_test_split on this set to evaluate the model."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 8,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:01:06.044904Z",
+     "start_time": "2021-01-27T08:01:06.026530Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "(48430, 9)\n"
+     ]
+    },
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>Unnamed: 0</th>\n",
+       "      <th>product_id</th>\n",
+       "      <th>product_name</th>\n",
+       "      <th>aisle_id</th>\n",
+       "      <th>aisle_name</th>\n",
+       "      <th>department_id</th>\n",
+       "      <th>department_name</th>\n",
+       "      <th>length_product_name</th>\n",
+       "      <th>product_name_words</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "Empty DataFrame\n",
+       "Columns: [Unnamed: 0, product_id, product_name, aisle_id, aisle_name, department_id, department_name, length_product_name, product_name_words]\n",
+       "Index: []"
+      ]
+     },
+     "execution_count": 8,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "# training data consist of all those departments that are not missing\n",
+    "Train = products_df[(products_df['department_name'] != 'missing')]\n",
+    "print(Train.shape)\n",
+    "Train[Train['department_name'] == 'missing']"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "The chosen production model will be tested on with unseen data (missing departmentes) which will be the testing data."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 9,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:01:06.059964Z",
+     "start_time": "2021-01-27T08:01:06.046584Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "(1258, 9)\n"
+     ]
+    },
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>Unnamed: 0</th>\n",
+       "      <th>product_id</th>\n",
+       "      <th>product_name</th>\n",
+       "      <th>aisle_id</th>\n",
+       "      <th>aisle_name</th>\n",
+       "      <th>department_id</th>\n",
+       "      <th>department_name</th>\n",
+       "      <th>length_product_name</th>\n",
+       "      <th>product_name_words</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>37</th>\n",
+       "      <td>37</td>\n",
+       "      <td>38</td>\n",
+       "      <td>Ultra Antibacterial Dish Liquid</td>\n",
+       "      <td>100</td>\n",
+       "      <td>missing</td>\n",
+       "      <td>21</td>\n",
+       "      <td>missing</td>\n",
+       "      <td>4</td>\n",
+       "      <td>ultra antibacterial dish liquid</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>71</th>\n",
+       "      <td>71</td>\n",
+       "      <td>72</td>\n",
+       "      <td>Organic Honeycrisp Apples</td>\n",
+       "      <td>100</td>\n",
+       "      <td>missing</td>\n",
+       "      <td>21</td>\n",
+       "      <td>missing</td>\n",
+       "      <td>3</td>\n",
+       "      <td>organic honeycrisp apple</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "    Unnamed: 0  product_id                     product_name  aisle_id  \\\n",
+       "37          37          38  Ultra Antibacterial Dish Liquid       100   \n",
+       "71          71          72        Organic Honeycrisp Apples       100   \n",
+       "\n",
+       "   aisle_name  department_id department_name  length_product_name  \\\n",
+       "37    missing             21         missing                    4   \n",
+       "71    missing             21         missing                    3   \n",
+       "\n",
+       "                 product_name_words  \n",
+       "37  ultra antibacterial dish liquid  \n",
+       "71         organic honeycrisp apple  "
+      ]
+     },
+     "execution_count": 9,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "# testing data consist of all those aisles and departments that are missing\n",
+    "Test = products_df[(products_df['department_name'] == 'missing')]\n",
+    "print(Test.shape)\n",
+    "Test.head(2)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Feature Extraction and Modelling"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 10,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:01:06.065617Z",
+     "start_time": "2021-01-27T08:01:06.063327Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# Assign X and y value\n",
+    "X = Train['product_name']\n",
+    "y = Train['department_id']"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-19T03:01:09.449906Z",
+     "start_time": "2021-01-19T03:01:09.447855Z"
+    }
+   },
+   "source": [
+    "There are 21 departments, and we are interested to classify all products to their departments as accurately as possible. This would be a multi-class classification and all classes in this case would be of equal importance. There is no need to do StandardScaler preprocessing as the vectors will have the same scale. We will do some preprocessing on the data like train_test_split and preparing the vocabulary using different methods like CountVectorizer, TfidfVectorizer, Word2Vec and Doc2Vec. We will be using macro averaging(M) and not the micro averaging(µ) to measure the overall performance as macro averaging treats all classes equally. Since we are interested in all the classes, the metrics for evaluating our models in which we will be interested in are:\n",
+    "\n",
+    "1) **Fscore(m)**: mean of precision(m) and recall(m)\n",
+    "* Precision(m): the average proportion of positive predictions that was actually correct per class\n",
+    "    > sum(TP/(TP+FP))/number of classes \n",
+    "* Recall(m): proportion of actual positives that was predicted correctly per class\n",
+    "    > sum(TP/(TP+FN))/number of classes\n",
+    "\n",
+    "2) **Confusion Matrix**"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 11,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:01:06.099274Z",
+     "start_time": "2021-01-27T08:01:06.068024Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# Preparing train and validation set\n",
+    "Xtrain, Xval, ytrain, yval = train_test_split(X,\n",
+    "                                              y,\n",
+    "                                              test_size=0.25,\n",
+    "                                              random_state=42,\n",
+    "                                              stratify=y)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 12,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:01:06.106950Z",
+     "start_time": "2021-01-27T08:01:06.101831Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "(36322,)\n"
+     ]
+    },
+    {
+     "data": {
+      "text/plain": [
+       "24248              Jalapeno Chomperz Crunchy Seaweed Chips\n",
+       "48754                      Pesto Alla Genovese Pasta Sauce\n",
+       "9317                        California Peach Lowfat Yogurt\n",
+       "16009                   Mocha with Almond Milk Iced Coffee\n",
+       "6592     Geranium Scented Multi-Surface Everyday Spray ...\n",
+       "Name: product_name, dtype: object"
+      ]
+     },
+     "execution_count": 12,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "print(Xtrain.shape)\n",
+    "Xtrain[:5]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 13,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:01:06.113608Z",
+     "start_time": "2021-01-27T08:01:06.108903Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "(12108,)\n"
+     ]
+    },
+    {
+     "data": {
+      "text/plain": [
+       "19437                               Chunky Beef Soup\n",
+       "28823                                    Onion Rings\n",
+       "17736    Gluten Free Red Velvet & Tuxedo Cupcake Duo\n",
+       "34609                               Miso Ramen Broth\n",
+       "16210                     3D White Pulsar Toothbrush\n",
+       "Name: product_name, dtype: object"
+      ]
+     },
+     "execution_count": 13,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "print(Xval.shape)\n",
+    "Xval[:5]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 14,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:01:06.120177Z",
+     "start_time": "2021-01-27T08:01:06.115290Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "(36322,)\n"
+     ]
+    },
+    {
+     "data": {
+      "text/plain": [
+       "24248    19\n",
+       "48754     9\n",
+       "9317     16\n",
+       "16009     7\n",
+       "6592     17\n",
+       "Name: department_id, dtype: int64"
+      ]
+     },
+     "execution_count": 14,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "print(ytrain.shape)\n",
+    "ytrain[:5]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 15,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:01:06.126720Z",
+     "start_time": "2021-01-27T08:01:06.121836Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "(12108,)\n"
+     ]
+    },
+    {
+     "data": {
+      "text/plain": [
+       "19437    15\n",
+       "28823     1\n",
+       "17736     3\n",
+       "34609    15\n",
+       "16210    11\n",
+       "Name: department_id, dtype: int64"
+      ]
+     },
+     "execution_count": 15,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "print(yval.shape)\n",
+    "yval[:5]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 16,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:01:06.132969Z",
+     "start_time": "2021-01-27T08:01:06.128548Z"
+    }
+   },
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "4922"
+      ]
+     },
+     "execution_count": 16,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "ytrain.value_counts().max()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 17,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:01:06.138924Z",
+     "start_time": "2021-01-27T08:01:06.134757Z"
+    }
+   },
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "29"
+      ]
+     },
+     "execution_count": 17,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "ytrain.value_counts().min()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 18,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:01:06.144847Z",
+     "start_time": "2021-01-27T08:01:06.140420Z"
+    }
+   },
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "1641"
+      ]
+     },
+     "execution_count": 18,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "yval.value_counts().max()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 19,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:01:06.150254Z",
+     "start_time": "2021-01-27T08:01:06.146292Z"
+    }
+   },
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "9"
+      ]
+     },
+     "execution_count": 19,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "yval.value_counts().min()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "#### Benchmark Model - CountVectorizer, LogisticRegression"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 24,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T07:55:57.884746Z",
+     "start_time": "2021-01-27T07:55:56.622364Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# Instantiate default CountVectorizer\n",
+    "lr_cvec = CountVectorizer(max_features=80_000, ngram_range=(1,2))\n",
+    "\n",
+    "# Fit and transform the CountVectorizer to train\n",
+    "lr_Xtrain_cvec = pd.DataFrame(lr_cvec.fit_transform(\n",
+    "    Xtrain).toarray(), columns=lr_cvec.get_feature_names())\n",
+    "\n",
+    "# Transform the fitted CountVectorizer to val\n",
+    "lr_Xval_cvec = pd.DataFrame(lr_cvec.transform(\n",
+    "    Xval).toarray(), columns=lr_cvec.get_feature_names())\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 25,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T07:56:01.420906Z",
+     "start_time": "2021-01-27T07:56:01.403077Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# load the model from disk in case crash\n",
+    "#benchmark_model = pickle.load(open('../models/benchmark_model.sav', 'rb'))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "The benchmark model does better much better than our baseline but it is overfitted, however the validation score is still quite high at 0.84."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 26,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T07:56:47.560440Z",
+     "start_time": "2021-01-27T07:56:03.575330Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "0.968448873960685\n",
+      "0.8427485959696068\n"
+     ]
+    }
+   ],
+   "source": [
+    "# check the scoring for the train set\n",
+    "benckmark_train_score = benchmark_model.score(lr_Xtrain_cvec, ytrain)\n",
+    "print(benckmark_train_score)\n",
+    "\n",
+    "# check the scoring for the validation set\n",
+    "print(benchmark_model.score(lr_Xval_cvec, yval))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 27,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T07:57:00.630273Z",
+     "start_time": "2021-01-27T07:56:49.445842Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# predictions of the validation data\n",
+    "benchmark_ypred = benchmark_model.predict(lr_Xval_cvec)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "The F1 socre for the benchmark model, Logistic Regression model fitted with CountVectorized features, is 0.75. This will be the main metrics for measuring and comparing the models as this is an imbalance multiclass text classification. Another metric to compare and see the performance of the models is to look at the confusion matrix itself. We can see that most of the features have been predicted accurately to the correct class. However there are still some misclassification. And department_id 10 which is others have none predicted correctly. This may be because it is the smallest department at only 500 products in them, therefore, in comparison it is hard to train for this."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 25,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:02:43.416996Z",
+     "start_time": "2021-01-27T08:02:43.404812Z"
+    },
+    "scrolled": true
+   },
+   "outputs": [],
+   "source": [
+    "# creating list of scores\n",
+    "model_name = []\n",
+    "model_precision = []\n",
+    "model_recall = []\n",
+    "model_F1scores = []\n",
+    "model_train_accuracy = []\n",
+    "model_test_accuracy = []\n",
+    "\n",
+    "# Create function for the scoring on unseen data\n",
+    "def scoring(yact, ypred, model, train_score):\n",
+    "    precision = precision_score(yact, ypred, average='macro')\n",
+    "    recall = recall_score(yact, ypred, average='macro')\n",
+    "    fscore = f1_score(yact, ypred, average='macro')\n",
+    "    accuracy = accuracy_score(yact, ypred)\n",
+    "\n",
+    "    print('Macro Precision: {:.2f}'.format(precision))\n",
+    "    print('Macro Recall: {:.2f}'.format(recall))\n",
+    "    print('Macro F1-score: {:.2f}\\n'.format(fscore))\n",
+    "    print('Accuracy: {:.2f}'.format(accuracy))\n",
+    "    print(classification_report(yact, ypred, digits=3))\n",
+    "    \n",
+    "    # Append to the lists\n",
+    "    model_name.append(model)\n",
+    "    model_precision.append(precision)\n",
+    "    model_recall.append(recall)\n",
+    "    model_F1scores.append(fscore)\n",
+    "    model_train_accuracy.append(train_score)\n",
+    "    model_test_accuracy.append(accuracy)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#Call scoring function\n",
+    "scoring(yval, benchmark_ypred, 'benchmark LR-CVEC model', benckmark_train_score)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "#### LogisticRegression Model - TfidfVectorizer"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 19,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T07:55:02.775285Z",
+     "start_time": "2021-01-27T07:55:01.672079Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# Instantiate default TfidfVectorizer\n",
+    "lr_tfidf = TfidfVectorizer(max_features=40_000, ngram_range=(1,2))\n",
+    "\n",
+    "# Fit and transform the CountVectorizer to train\n",
+    "lr_Xtrain_tfidf = pd.DataFrame(lr_tfidf.fit_transform(\n",
+    "    Xtrain).toarray(), columns=lr_tfidf.get_feature_names())\n",
+    "\n",
+    "# Transform the fitted CountVectorizer to val\n",
+    "lr_Xval_tfidf = pd.DataFrame(lr_tfidf.transform(\n",
+    "    Xval).toarray(), columns=lr_tfidf.get_feature_names())\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 20,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T07:55:06.791250Z",
+     "start_time": "2021-01-27T07:55:06.781826Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# load the model from disk in case crash\n",
+    "#lr_tfidf_model = pickle.load(open('../models/lr_tfidf_model.sav', 'rb'))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "This model also performs better than the baseline and is less overfitted than the benchmark model which is the logistic Regression fitted with CountVectorized features, and this model performs better on unseen data."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 21,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T07:55:27.073527Z",
+     "start_time": "2021-01-27T07:55:10.485306Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "0.892324211221849\n",
+      "0.8289560621076973\n"
+     ]
+    }
+   ],
+   "source": [
+    "# check the scoring for the train set\n",
+    "lr_tfidf_train_score = lr_tfidf_model.score(lr_Xtrain_tfidf, ytrain)\n",
+    "print(lr_tfidf_train_score)\n",
+    "\n",
+    "# check the scoring for the validation set\n",
+    "print(lr_tfidf_model.score(lr_Xval_tfidf, yval))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 22,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T07:55:27.944186Z",
+     "start_time": "2021-01-27T07:55:27.083637Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# predictions of the validation data\n",
+    "lr_ypred_tfidf = lr_tfidf_model.predict(lr_Xval_tfidf)\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "The F1 socre for the lr_tfidf_model, Logistic Regression model fitted with TfidfVectorized features, is 0.74 which is similar to the benchmark model. This will be the main metrics for measuring and comparing the models as this is an imbalance multiclass text classification. Another metric to compare and see the performance of the models is to look at the confusion matrix itself. We can see from the confusion matrix that most of the features have been predicted accurately to the correct class. However there are still some misclassification. And department_id 10 which is others have none predicted correctly. This may be because it is the smallest department at only 500 products in them, therefore, in comparison it is hard to train for this, this is a similar case seen for the benchmark model."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 29,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T07:57:07.399728Z",
+     "start_time": "2021-01-27T07:57:07.356037Z"
+    },
+    "scrolled": true
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Macro Precision: 0.79\n",
+      "Macro Recall: 0.71\n",
+      "Macro F1-score: 0.74\n",
+      "\n",
+      "Accuracy: 0.83\n",
+      "              precision    recall  f1-score   support\n",
+      "\n",
+      "           1      0.777     0.780     0.778      1002\n",
+      "           2      0.778     0.153     0.256       137\n",
+      "           3      0.875     0.723     0.792       379\n",
+      "           4      0.719     0.724     0.722       421\n",
+      "           5      0.937     0.848     0.890       263\n",
+      "           6      0.684     0.425     0.524       285\n",
+      "           7      0.898     0.927     0.912      1091\n",
+      "           8      0.986     0.885     0.933       243\n",
+      "           9      0.810     0.753     0.780       465\n",
+      "          10      0.000     0.000     0.000         9\n",
+      "          11      0.828     0.936     0.879      1641\n",
+      "          12      0.773     0.692     0.730       227\n",
+      "          13      0.755     0.866     0.807      1343\n",
+      "          14      0.925     0.792     0.853       279\n",
+      "          15      0.790     0.797     0.794       523\n",
+      "          16      0.881     0.916     0.898       862\n",
+      "          17      0.931     0.875     0.902       771\n",
+      "          18      0.932     0.711     0.807       270\n",
+      "          19      0.816     0.901     0.856      1566\n",
+      "          20      0.772     0.523     0.623       331\n",
+      "\n",
+      "    accuracy                          0.829     12108\n",
+      "   macro avg      0.793     0.711     0.737     12108\n",
+      "weighted avg      0.829     0.829     0.823     12108\n",
+      "\n"
+     ]
+    }
+   ],
+   "source": [
+    "#Call scoring function\n",
+    "scoring(yval, lr_ypred_tfidf, 'LR-TFIDF model', lr_tfidf_train_score)\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "#### LogisticRegression Model - Doc2Vec"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 41,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:05:11.917656Z",
+     "start_time": "2021-01-27T08:05:11.912804Z"
+    }
+   },
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "8"
+      ]
+     },
+     "execution_count": 41,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "# create cores for Doc2Vec using multiproccessors\n",
+    "cores = multiprocessing.cpu_count()\n",
+    "cores"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 42,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:05:12.670866Z",
+     "start_time": "2021-01-27T08:05:12.660834Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "class Doc2VecModel(BaseEstimator):\n",
+    "\n",
+    "    def __init__(self, dm=0, workers=cores, vector_size=100, min_count=1):\n",
+    "        self.d2v_model = None\n",
+    "        self.dm = 0\n",
+    "        self.workers = workers\n",
+    "        self.vector_size = vector_size\n",
+    "        self.min_count = min_count\n",
+    "\n",
+    "    def fit(self, raw_documents, y=None):\n",
+    "        # Initialize model\n",
+    "        self.d2v_model = Doc2Vec(dm=self.dm, vector_size=self.vector_size, min_count=self.min_count, workers = self.workers, epochs=100, alpha=0.025, min_alpha=0.001)\n",
+    "        # Tag docs\n",
+    "        tagged_documents = []\n",
+    "        for index, row in raw_documents.iteritems():\n",
+    "            tag = '{}_{}'.format(\"type\", index)\n",
+    "            tokens = row.split()\n",
+    "            tagged_documents.append(TaggedDocument(words=tokens, tags=[tag]))\n",
+    "        \n",
+    "        # Build vocabulary\n",
+    "        self.d2v_model.build_vocab(tagged_documents)\n",
+    "        # Train model\n",
+    "        self.d2v_model.train(tagged_documents, total_examples=len(tagged_documents), epochs=self.d2v_model.epochs)\n",
+    "        return self\n",
+    "\n",
+    "    def transform(self, raw_documents):\n",
+    "        X = []\n",
+    "        for index, row in raw_documents.iteritems():\n",
+    "            X.append(self.d2v_model.infer_vector(row.split()))\n",
+    "        X = pd.DataFrame(X, index=raw_documents.index)\n",
+    "        return X\n",
+    "\n",
+    "\n",
+    "    def fit_transform(self, raw_documents, y=None):\n",
+    "        self.fit(raw_documents)\n",
+    "        return self.transform(raw_documents)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 32,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T07:57:22.600562Z",
+     "start_time": "2021-01-27T07:57:18.565722Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "train_tagged = [\n",
+    "    TaggedDocument(words=word_tokenize(_d.lower()),\n",
+    "                   tags=[str(i)])\n",
+    "    for i, _d in enumerate(Xtrain)\n",
+    "]\n",
+    "\n",
+    "val_tagged = [\n",
+    "    TaggedDocument(words=word_tokenize(_d.lower()),\n",
+    "                   tags=[str(i)])\n",
+    "    for i, _d in enumerate(Xval)\n",
+    "]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 33,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T07:57:22.605774Z",
+     "start_time": "2021-01-27T07:57:22.602454Z"
+    }
+   },
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "[TaggedDocument(words=['jalapeno', 'chomperz', 'crunchy', 'seaweed', 'chips'], tags=['0']),\n",
+       " TaggedDocument(words=['pesto', 'alla', 'genovese', 'pasta', 'sauce'], tags=['1']),\n",
+       " TaggedDocument(words=['california', 'peach', 'lowfat', 'yogurt'], tags=['2']),\n",
+       " TaggedDocument(words=['mocha', 'with', 'almond', 'milk', 'iced', 'coffee'], tags=['3']),\n",
+       " TaggedDocument(words=['geranium', 'scented', 'multi-surface', 'everyday', 'spray', 'cleaner'], tags=['4'])]"
+      ]
+     },
+     "execution_count": 33,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "train_tagged[:5]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 34,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T07:57:29.514188Z",
+     "start_time": "2021-01-27T07:57:22.607476Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "100%|██████████| 36322/36322 [00:00<00:00, 3434996.05it/s]\n"
+     ]
+    }
+   ],
+   "source": [
+    "# Building Doc2Vec model\n",
+    "lr_model_d2v = Doc2Vec(vector_size=200, dm=0, workers=cores)\n",
+    "lr_model_d2v.build_vocab([x for x in tqdm(train_tagged)])"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 35,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T07:59:16.078726Z",
+     "start_time": "2021-01-27T07:57:29.516530Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "CPU times: user 2 µs, sys: 0 ns, total: 2 µs\n",
+      "Wall time: 7.15 µs\n"
+     ]
+    }
+   ],
+   "source": [
+    "#Train Doc2Vec model\n",
+    "%time\n",
+    "for epoch in range(30):\n",
+    "    lr_model_d2v.train(train_tagged, total_examples=lr_model_d2v.corpus_count, epochs=lr_model_d2v.epochs)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 36,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T07:59:16.180818Z",
+     "start_time": "2021-01-27T07:59:16.080527Z"
+    }
+   },
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "array([[-0.15918581, -0.09649886, -0.13357653, ..., -0.10301879,\n",
+       "         0.04833793,  0.47126016],\n",
+       "       [-0.0895917 , -0.29506344, -0.07562263, ..., -0.1057526 ,\n",
+       "         0.05153437,  0.17427756],\n",
+       "       [-0.16252813, -0.00469088,  0.24340214, ...,  0.07630552,\n",
+       "         0.21427163,  0.06844027],\n",
+       "       ...,\n",
+       "       [-0.28914493, -0.15181713,  0.04238746, ..., -0.04216402,\n",
+       "         0.09650681, -0.00107136],\n",
+       "       [-0.03379864, -0.06143373, -0.08159748, ...,  0.16069898,\n",
+       "        -0.18587448, -0.03059678],\n",
+       "       [ 0.00691702, -0.17209338,  0.07834499, ...,  0.07638747,\n",
+       "         0.01856922,  0.02841053]], dtype=float32)"
+      ]
+     },
+     "execution_count": 36,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "#Extract training vectors\n",
+    "lr_Xtrain_d2v = np.array([lr_model_d2v.docvecs[str(i)] for i in range(len(train_tagged))])\n",
+    "lr_Xtrain_d2v"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 37,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T07:59:38.343268Z",
+     "start_time": "2021-01-27T07:59:35.170828Z"
+    }
+   },
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "array([[-8.4347479e-02, -1.1478721e-01,  7.5345375e-02, ...,\n",
+       "         3.9863557e-02,  4.0686995e-02,  1.0779574e-02],\n",
+       "       [-5.2520506e-02, -3.2997712e-02, -5.1174998e-02, ...,\n",
+       "         1.8333290e-02, -5.5070232e-05,  3.0561090e-02],\n",
+       "       [ 3.4570280e-02, -1.0321204e-01, -3.9730418e-02, ...,\n",
+       "         8.3344489e-02, -9.6193757e-03, -5.1851790e-02],\n",
+       "       ...,\n",
+       "       [-3.4690484e-02, -1.3086987e-02, -8.4680282e-02, ...,\n",
+       "         1.7783675e-02, -4.2983633e-02,  6.1793689e-02],\n",
+       "       [-1.8378721e-01, -4.9074680e-02, -1.6788326e-02, ...,\n",
+       "        -4.7061816e-03,  8.9874705e-03,  4.2181242e-02],\n",
+       "       [ 2.0371001e-02,  5.3682741e-02,  4.2887643e-02, ...,\n",
+       "        -4.5779806e-02,  6.8014435e-02, -4.1479491e-02]], dtype=float32)"
+      ]
+     },
+     "execution_count": 37,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "# This is for test, but for val, we would want to generate vectors for prediction\n",
+    "lr_Xval_d2v = np.array([lr_model_d2v.infer_vector(val_tagged[i][0]) for i in range(len(val_tagged))])\n",
+    "lr_Xval_d2v"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 38,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T07:59:45.745826Z",
+     "start_time": "2021-01-27T07:59:45.741096Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# load the model from disk in case crash\n",
+    "#lr_d2v_model = pickle.load(open('../models/lr_d2v_model.sav', 'rb'))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 39,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T07:59:49.864783Z",
+     "start_time": "2021-01-27T07:59:49.794505Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "0.05737569517097076\n",
+      "Testing accuracy 0.030888668648827222\n",
+      "Testing F1 score: 0.012654807834186854\n"
+     ]
+    }
+   ],
+   "source": [
+    "lr_d2v_train_score = lr_d2v_model.score(lr_Xtrain_d2v, ytrain)\n",
+    "lr_ypred_d2v = lr_d2v_model.predict(lr_Xval_d2v)\n",
+    "print(lr_d2v_train_score)\n",
+    "print('Testing accuracy %s' % accuracy_score(yval, lr_ypred_d2v))\n",
+    "print('Testing F1 score: {}'.format(f1_score(yval, lr_ypred_d2v, average='macro')))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "The F1 socre for the lr_d2v_model, Logistic Regression model fitted with Doc2Vec features, is 0.28 which much lower than the models before. This will be the main metrics for measuring and comparing the models as this is an imbalance multiclass text classification. Another metric to compare and see the performance of the models is to look at the confusion matrix itself. We can see from the confusion matrix that as compared to the previous models, there are a lot less correctly predicted products to their respective classes."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 40,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T07:59:56.599356Z",
+     "start_time": "2021-01-27T07:59:56.558882Z"
+    },
+    "scrolled": true
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Macro Precision: 0.05\n",
+      "Macro Recall: 0.05\n",
+      "Macro F1-score: 0.01\n",
+      "\n",
+      "Accuracy: 0.03\n",
+      "              precision    recall  f1-score   support\n",
+      "\n",
+      "           1      0.000     0.000     0.000      1002\n",
+      "           2      0.000     0.000     0.000       137\n",
+      "           3      0.000     0.000     0.000       379\n",
+      "           4      0.031     0.204     0.054       421\n",
+      "           5      0.027     0.715     0.052       263\n",
+      "           6      0.000     0.000     0.000       285\n",
+      "           7      0.118     0.027     0.045      1091\n",
+      "           8      0.000     0.000     0.000       243\n",
+      "           9      0.033     0.004     0.008       465\n",
+      "          10      0.000     0.000     0.000         9\n",
+      "          11      0.077     0.002     0.004      1641\n",
+      "          12      0.000     0.000     0.000       227\n",
+      "          13      0.364     0.006     0.012      1343\n",
+      "          14      0.000     0.000     0.000       279\n",
+      "          15      0.000     0.000     0.000       523\n",
+      "          16      0.000     0.000     0.000       862\n",
+      "          17      0.026     0.057     0.035       771\n",
+      "          18      0.000     0.000     0.000       270\n",
+      "          19      0.250     0.001     0.001      1566\n",
+      "          20      0.052     0.036     0.043       331\n",
+      "\n",
+      "    accuracy                          0.031     12108\n",
+      "   macro avg      0.049     0.053     0.013     12108\n",
+      "weighted avg      0.100     0.031     0.013     12108\n",
+      "\n"
+     ]
+    },
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "/Users/becksphan/opt/anaconda3/lib/python3.8/site-packages/sklearn/metrics/_classification.py:1221: UndefinedMetricWarning: Precision is ill-defined and being set to 0.0 in labels with no predicted samples. Use `zero_division` parameter to control this behavior.\n",
+      "  _warn_prf(average, modifier, msg_start, len(result))\n",
+      "/Users/becksphan/opt/anaconda3/lib/python3.8/site-packages/sklearn/metrics/_classification.py:1221: UndefinedMetricWarning: Precision and F-score are ill-defined and being set to 0.0 in labels with no predicted samples. Use `zero_division` parameter to control this behavior.\n",
+      "  _warn_prf(average, modifier, msg_start, len(result))\n"
+     ]
+    }
+   ],
+   "source": [
+    "#Call scoring function\n",
+    "scoring(yval, lr_ypred_d2v, 'LR-D2V model', lr_d2v_train_score)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "#### Baseline"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Without any models, the products will be classified correctly at about 14%. This is the baseline accuracy, which means if all product names were to be classified into our majority class, it would be 14% accurate."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 18,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T07:54:47.346180Z",
+     "start_time": "2021-01-27T07:54:47.327815Z"
+    },
+    "scrolled": true
+   },
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "11    0.135510\n",
+       "19    0.129343\n",
+       "13    0.110897\n",
+       "7     0.090138\n",
+       "1     0.082732\n",
+       "Name: department_id, dtype: float64"
+      ]
+     },
+     "execution_count": 18,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "ytrain.value_counts(normalize=True)[:5]"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "#### MultinomialNaiveBayes Model - CountVectorizer"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 20,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:01:13.424709Z",
+     "start_time": "2021-01-27T08:01:12.258362Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# Instantiate default CountVectorizer\n",
+    "mnb_cvec = CountVectorizer(max_features=80_000, ngram_range=(1,2))\n",
+    "\n",
+    "# Fit and transform the CountVectorizer to train\n",
+    "mnb_Xtrain_cvec = pd.DataFrame(mnb_cvec.fit_transform(\n",
+    "    Xtrain).toarray(), columns=mnb_cvec.get_feature_names())\n",
+    "\n",
+    "# Transform the fitted CountVectorizer to val\n",
+    "mnb_Xval_cvec = pd.DataFrame(mnb_cvec.transform(\n",
+    "    Xval).toarray(), columns=mnb_cvec.get_feature_names())"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 21,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:01:15.249577Z",
+     "start_time": "2021-01-27T08:01:15.228890Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# load the model from disk in case crash\n",
+    "#mnb_cvec_model = pickle.load(open('../models/mnb_cvec_model.sav', 'rb'))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 22,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:01:59.571035Z",
+     "start_time": "2021-01-27T08:01:17.882218Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "0.8845603215681955\n",
+      "0.8046745953088866\n"
+     ]
+    }
+   ],
+   "source": [
+    "# check the scoring for the train set\n",
+    "mnb_cvec_train_score = mnb_cvec_model.score(mnb_Xtrain_cvec, ytrain)\n",
+    "print(mnb_cvec_train_score)\n",
+    "\n",
+    "# check the scoring for the validation set\n",
+    "print(mnb_cvec_model.score(mnb_Xval_cvec, yval))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 23,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:02:20.114190Z",
+     "start_time": "2021-01-27T08:02:09.553703Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# predictions of the validation data\n",
+    "mnb_cvec_ypred = mnb_cvec_model.predict(mnb_Xval_cvec)\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "The F1 socre for the mnb_cvec_model, Multinomial Naive Bayes model fitted with CountVectorized features, is 0.72 which sligtly lower than the lr_cvec and lr_tfidf models before similar trend as the accuracy score. F1score will be the main metrics for measuring and comparing the models as this is an imbalance multiclass text classification. Another metric to compare and see the performance of the models is to look at the confusion matrix itself. We can see from the confusion matrix that it also follows a similar trend with the lr_cvec and lr_tfidf models."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 26,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:02:49.360444Z",
+     "start_time": "2021-01-27T08:02:49.307844Z"
+    },
+    "scrolled": true
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Macro Precision: 0.80\n",
+      "Macro Recall: 0.66\n",
+      "Macro F1-score: 0.70\n",
+      "\n",
+      "Accuracy: 0.80\n",
+      "              precision    recall  f1-score   support\n",
+      "\n",
+      "           1      0.713     0.803     0.756      1002\n",
+      "           2      0.789     0.109     0.192       137\n",
+      "           3      0.893     0.594     0.713       379\n",
+      "           4      0.901     0.520     0.660       421\n",
+      "           5      0.952     0.673     0.788       263\n",
+      "           6      0.752     0.309     0.438       285\n",
+      "           7      0.831     0.954     0.888      1091\n",
+      "           8      0.958     0.947     0.952       243\n",
+      "           9      0.798     0.705     0.749       465\n",
+      "          10      0.000     0.000     0.000         9\n",
+      "          11      0.863     0.938     0.899      1641\n",
+      "          12      0.845     0.551     0.667       227\n",
+      "          13      0.705     0.844     0.768      1343\n",
+      "          14      0.916     0.624     0.742       279\n",
+      "          15      0.765     0.811     0.787       523\n",
+      "          16      0.883     0.913     0.898       862\n",
+      "          17      0.930     0.882     0.905       771\n",
+      "          18      0.919     0.674     0.778       270\n",
+      "          19      0.723     0.921     0.810      1566\n",
+      "          20      0.801     0.390     0.524       331\n",
+      "\n",
+      "    accuracy                          0.805     12108\n",
+      "   macro avg      0.797     0.658     0.696     12108\n",
+      "weighted avg      0.814     0.805     0.794     12108\n",
+      "\n"
+     ]
+    },
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "/Users/becksphan/opt/anaconda3/lib/python3.8/site-packages/sklearn/metrics/_classification.py:1221: UndefinedMetricWarning: Precision is ill-defined and being set to 0.0 in labels with no predicted samples. Use `zero_division` parameter to control this behavior.\n",
+      "  _warn_prf(average, modifier, msg_start, len(result))\n",
+      "/Users/becksphan/opt/anaconda3/lib/python3.8/site-packages/sklearn/metrics/_classification.py:1221: UndefinedMetricWarning: Precision and F-score are ill-defined and being set to 0.0 in labels with no predicted samples. Use `zero_division` parameter to control this behavior.\n",
+      "  _warn_prf(average, modifier, msg_start, len(result))\n"
+     ]
+    }
+   ],
+   "source": [
+    "#Call scoring function\n",
+    "scoring(yval, mnb_cvec_ypred, 'MultinomialNB-CVEC model', mnb_cvec_train_score)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "#### MultinomialNaiveBayes Model - TfidfVectorizer"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 34,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:04:32.483672Z",
+     "start_time": "2021-01-27T08:04:31.822240Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# Instantiate default TfidfVectorizer\n",
+    "mnb_tfidf = TfidfVectorizer(max_features=40_000, ngram_range=(1,1))\n",
+    "\n",
+    "# Fit and transform the CountVectorizer to train\n",
+    "mnb_Xtrain_tfidf = pd.DataFrame(mnb_tfidf.fit_transform(\n",
+    "    Xtrain).toarray(), columns=mnb_tfidf.get_feature_names())\n",
+    "\n",
+    "# Transform the fitted CountVectorizer to val\n",
+    "mnb_Xval_tfidf = pd.DataFrame(mnb_tfidf.transform(\n",
+    "    Xval).toarray(), columns=mnb_tfidf.get_feature_names())\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# load the model from disk in case crash\n",
+    "#mnb_tfidf_model = pickle.load(open('../models/mnb_tfidf_model.sav', 'rb'))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 37,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:04:45.516050Z",
+     "start_time": "2021-01-27T08:04:44.580348Z"
+    }
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "0.7902923847805737\n",
+      "0.7558638916418896\n"
+     ]
+    }
+   ],
+   "source": [
+    "# check the scoring for the train set\n",
+    "mnb_tfidf_train_score = mnb_tfidf_model.score(mnb_Xtrain_tfidf, ytrain)\n",
+    "print(mnb_tfidf_train_score)\n",
+    "\n",
+    "# check the scoring for the validation set\n",
+    "print(mnb_tfidf_model.score(mnb_Xval_tfidf, yval))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 38,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:04:47.199547Z",
+     "start_time": "2021-01-27T08:04:46.990025Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# predictions of the validation data\n",
+    "mnb_tfidf_ypred = mnb_tfidf_model.predict(mnb_Xval_tfidf)\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "The F1 socre for the mnb_tfidf_model, Multinomial Naive Bayes model fitted with TfidfVectorized features, is 0.70 which lower than the models before except for the lr_d2v model. This is a similar trend with its accuracy score. F1score will be the main metrics for measuring and comparing the models as this is an imbalance multiclass text classification. Another metric to compare and see the performance of the models is to look at the confusion matrix itself. We can see from the confusion matrix that it also follows a similar trend with the lr_cvec and lr_tfidf models."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 39,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T08:04:48.463341Z",
+     "start_time": "2021-01-27T08:04:48.417909Z"
+    },
+    "scrolled": true
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Macro Precision: 0.78\n",
+      "Macro Recall: 0.57\n",
+      "Macro F1-score: 0.62\n",
+      "\n",
+      "Accuracy: 0.76\n",
+      "              precision    recall  f1-score   support\n",
+      "\n",
+      "           1      0.645     0.782     0.707      1002\n",
+      "           2      0.750     0.022     0.043       137\n",
+      "           3      0.901     0.507     0.649       379\n",
+      "           4      0.894     0.442     0.591       421\n",
+      "           5      0.968     0.574     0.721       263\n",
+      "           6      0.667     0.140     0.232       285\n",
+      "           7      0.797     0.942     0.864      1091\n",
+      "           8      0.990     0.840     0.909       243\n",
+      "           9      0.814     0.604     0.694       465\n",
+      "          10      0.000     0.000     0.000         9\n",
+      "          11      0.821     0.935     0.875      1641\n",
+      "          12      0.849     0.348     0.494       227\n",
+      "          13      0.617     0.840     0.712      1343\n",
+      "          14      0.949     0.401     0.564       279\n",
+      "          15      0.773     0.717     0.744       523\n",
+      "          16      0.891     0.855     0.873       862\n",
+      "          17      0.928     0.842     0.883       771\n",
+      "          18      0.964     0.496     0.655       270\n",
+      "          19      0.644     0.925     0.759      1566\n",
+      "          20      0.835     0.260     0.396       331\n",
+      "\n",
+      "    accuracy                          0.756     12108\n",
+      "   macro avg      0.785     0.574     0.618     12108\n",
+      "weighted avg      0.782     0.756     0.737     12108\n",
+      "\n"
+     ]
+    },
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "/Users/becksphan/opt/anaconda3/lib/python3.8/site-packages/sklearn/metrics/_classification.py:1221: UndefinedMetricWarning: Precision is ill-defined and being set to 0.0 in labels with no predicted samples. Use `zero_division` parameter to control this behavior.\n",
+      "  _warn_prf(average, modifier, msg_start, len(result))\n",
+      "/Users/becksphan/opt/anaconda3/lib/python3.8/site-packages/sklearn/metrics/_classification.py:1221: UndefinedMetricWarning: Precision and F-score are ill-defined and being set to 0.0 in labels with no predicted samples. Use `zero_division` parameter to control this behavior.\n",
+      "  _warn_prf(average, modifier, msg_start, len(result))\n"
+     ]
+    }
+   ],
+   "source": [
+    "#Call scoring function\n",
+    "scoring(yval, mnb_tfidf_ypred, 'MultinomialNB-TFIDF model', mnb_tfidf_train_score)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-25T09:08:19.397850Z",
+     "start_time": "2021-01-25T09:08:19.366774Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "mnb_tfidf_cm = pd.DataFrame(sklearn.metrics.confusion_matrix(yval, mnb_tfidf_ypred))\n",
+    "mnb_tfidf_cm"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "#### GaussianNaiveBayes Model - Doc2Vec"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Building Doc2Vec model\n",
+    "gnb_model_d2v = Doc2Vec(vector_size=200, dm=0, min_count=5, workers=cores)\n",
+    "gnb_model_d2v.build_vocab([x for x in tqdm(train_tagged)])"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#Train Doc2Vec model\n",
+    "%time\n",
+    "for epoch in range(30):\n",
+    "    gnb_model_d2v.train(train_tagged, total_examples=gnb_model_d2v.corpus_count, epochs=gnb_model_d2v.epochs)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#Extract training vectors\n",
+    "gnb_Xtrain_d2v = np.array([gnb_model_d2v.docvecs[str(i)] for i in range(len(train_tagged))])\n",
+    "gnb_Xtrain_d2v"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# This is for test, but for val, we would want to generate vectors for prediction\n",
+    "gnb_Xval_d2v = np.array([gnb_model_d2v.infer_vector(val_tagged[i][0]) for i in range(len(val_tagged))])\n",
+    "gnb_Xval_d2v"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "gnb_d2v_train_score = gnb_d2v_model.score(gnb_Xtrain_d2v, ytrain)\n",
+    "gnb_d2v_ypred = gnb_d2v_model.predict(gnb_Xval_d2v)\n",
+    "print(gnb_d2v_train_score)\n",
+    "print('Testing accuracy %s' % accuracy_score(yval, gnb_ypred_d2v))\n",
+    "print('Testing F1 score: {}'.format(f1_score(yval, gnb_ypred_d2v, average='macro')))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# load the model from disk\n",
+    "#gnb_d2v_model = pickle.load(open('../models/gnb_d2v_model.sav', 'rb'))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#Call scoring function\n",
+    "scoring(yval, gnb_ypred_d2v, 'GaussianNB-D2V model', gnb_d2v_train_score)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "gnb_d2v_cm = pd.DataFrame(sklearn.metrics.confusion_matrix(yval, gnb_d2v_ypred))\n",
+    "gnb_d2v_cm"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "#### Random Forest Model - CountVectorizer"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-25T16:18:24.939211Z",
+     "start_time": "2021-01-25T16:18:23.963637Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# Instantiate default CountVectorizer\n",
+    "rf_cvec = CountVectorizer(max_features=20_000, min_df=3, ngram_range=(1,2))\n",
+    "\n",
+    "# Fit and transform the CountVectorizer to train\n",
+    "rf_Xtrain_cvec = pd.DataFrame(rf_cvec.fit_transform(\n",
+    "    Xtrain).toarray(), columns=rf_cvec.get_feature_names())\n",
+    "\n",
+    "# Transform the fitted CountVectorizer to val\n",
+    "rf_Xval_cvec = pd.DataFrame(rf_cvec.transform(\n",
+    "    Xval).toarray(), columns=rf_cvec.get_feature_names())"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# load the model from disk\n",
+    "#rf_cvec_model = pickle.load(open('../models/rf_cvec_model.sav', 'rb'))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "This model similar to their LogisticRegression counterpart, performed much better than the baseline but performed slightly worse than their counterparts at 82% accuracy and is also slightly overfitted."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-25T08:56:09.953819Z",
+     "start_time": "2021-01-25T08:56:02.163668Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# check the scoring for the train set\n",
+    "rf_cvec_train_score = rf_cvec_model.score(rf_Xtrain_cvec, ytrain)\n",
+    "print(rf_cvec_train_score)\n",
+    "\n",
+    "# check the scoring for the validation set\n",
+    "print(rf_cvec_model.score(rf_Xval_cvec, yval))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-25T08:56:10.811268Z",
+     "start_time": "2021-01-25T08:56:09.962603Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# predictions of the validation data\n",
+    "rf_cvec_ypred = rf_cvec_model.predict(rf_Xval_cvec)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "The F1 socre for the mnb_cvec_model, Multinomial Naive Bayes model fitted with CountVectorized features, is 0.72 which sligtly lower than the lr_cvec and lr_tfidf models before similar trend as the accuracy score. F1score will be the main metrics for measuring and comparing the models as this is an imbalance multiclass text classification. Another metric to compare and see the performance of the models is to look at the confusion matrix itself. We can see from the confusion matrix that it also follows a similar trend with the lr_cvec and lr_tfidf models."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-25T08:56:10.869852Z",
+     "start_time": "2021-01-25T08:56:10.814337Z"
+    },
+    "scrolled": true
+   },
+   "outputs": [],
+   "source": [
+    "#Call scoring function\n",
+    "scoring(yval, rf_cvec_ypred, 'RandomForest-CVEC model', rf_cvec_train_score)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-25T08:56:10.913051Z",
+     "start_time": "2021-01-25T08:56:10.872180Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "rf_cvec_cm = pd.DataFrame(sklearn.metrics.confusion_matrix(yval, rf_cvec_ypred))\n",
+    "rf_cvec_cm"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "#### Random Forest Model - TfidfVectorizer"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-25T09:07:56.651283Z",
+     "start_time": "2021-01-25T09:07:55.627049Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# Instantiate default TfidfVectorizer\n",
+    "rf_tfidf = TfidfVectorizer(max_features=40_000, min_df=3, ngram_range=(1,2))\n",
+    "\n",
+    "# Fit and transform the CountVectorizer to train\n",
+    "rf_Xtrain_tfidf = pd.DataFrame(rf_tfidf.fit_transform(\n",
+    "    Xtrain).toarray(), columns=rf_tfidf.get_feature_names())\n",
+    "\n",
+    "# Transform the fitted CountVectorizer to val\n",
+    "rf_Xval_tfidf = pd.DataFrame(rf_tfidf.transform(\n",
+    "    Xval).toarray(), columns=rf_tfidf.get_feature_names())\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-25T09:08:03.194603Z",
+     "start_time": "2021-01-25T09:07:57.936924Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# Instantiate LogisticRegression model\n",
+    "rf_tfidf_ = MultinomialNB(n_estimators=, random_state=42, criterion='gini')\n",
+    "\n",
+    "# fit train cvec data to LogisticRegression model\n",
+    "rf_tfidf_model = rf_tfidf_.fit(mnb_Xtrain_tfidf, ytrain)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# save the model to disk\n",
+    "pickle.dump(rf_tfidf_model, open('../models/rf_tfidf_model.sav', 'wb'))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# load the model from disk\n",
+    "#rf_tfidf_model = pickle.load(open('../models/rf_tfidf_model.sav', 'rb'))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "This model also performed much better than the baseline but performed slightly worse than their counterparts at 81% accuracy and is more overfitted than the other models."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-25T09:08:07.551837Z",
+     "start_time": "2021-01-25T09:08:05.606288Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# check the scoring for the train set\n",
+    "rf_tfidf_train_score = rf_tfidf_model.score(rf_Xtrain_tfidf, ytrain)\n",
+    "print(rf_tfidf_train_score)\n",
+    "\n",
+    "# check the scoring for the validation set\n",
+    "print(rf_tfidf_model.score(rf_Xval_tfidf, yval))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-25T09:08:08.841693Z",
+     "start_time": "2021-01-25T09:08:08.549753Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# predictions of the validation data\n",
+    "rf_tfidf_ypred = rf_tfidf_model.predict(rf_Xval_tfidf)\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "The F1 socre for the mnb_tfidf_model, Multinomial Naive Bayes model fitted with TfidfVectorized features, is 0.70 which lower than the models before except for the lr_d2v model. This is a similar trend with its accuracy score. F1score will be the main metrics for measuring and comparing the models as this is an imbalance multiclass text classification. Another metric to compare and see the performance of the models is to look at the confusion matrix itself. We can see from the confusion matrix that it also follows a similar trend with the lr_cvec and lr_tfidf models."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-25T09:08:10.360165Z",
+     "start_time": "2021-01-25T09:08:10.306342Z"
+    },
+    "scrolled": true
+   },
+   "outputs": [],
+   "source": [
+    "#Call scoring function\n",
+    "scoring(yval, rf_tfidf_ypred, 'RandomForest-TFIDF model', rf_tfidf_train_score)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-25T09:08:19.397850Z",
+     "start_time": "2021-01-25T09:08:19.366774Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "rf_tfidf_cm = pd.DataFrame(sklearn.metrics.confusion_matrix(yval, rf_tfidf_ypred))\n",
+    "rf_tfidf_cm"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "#### Random Forest Model - Doc2Vec"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-26T04:07:37.442037Z",
+     "start_time": "2021-01-26T01:41:17.886677Z"
+    },
+    "scrolled": true
+   },
+   "outputs": [],
+   "source": [
+    "rf_d2v_params = {'doc2vec__vector_size': [100,200],\n",
+    "                 'doc2vec__min_count': [2, 3]\n",
+    "}\n",
+    "\n",
+    "rf_d2v_pipe = Pipeline([('doc2vec', Doc2VecModel(workers=cores, dm=0)), ('rf', RandomForestClassifier(random_state=42, criterion='gini', n_estimators=100))])\n",
+    "\n",
+    "rf_d2v_gs = GridSearchCV(rf_d2v_pipe, \n",
+    "                        param_grid=rf_d2v_params,\n",
+    "                        verbose=2,\n",
+    "                        cv=5)\n",
+    "\n",
+    "# Fit the GridSearchCV object to the data.\n",
+    "rf_d2v_gs.fit(Xtrain, ytrain)\n",
+    "\n",
+    "print(f'Finished and best params: {rf_d2v_gs.best_params_} and best score: {rf_d2v_gs.best_score_}.')"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "##### Fitting with best params"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Building Doc2Vec model\n",
+    "rf_model_d2v = Doc2Vec(size=100, dm=1, min_count=2, workers=cores)\n",
+    "rf_model_d2v.build_vocab([x for x in tqdm(train_tagged)])"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#Train Doc2Vec model\n",
+    "%time\n",
+    "for epoch in range(30):\n",
+    "    rf_model_d2v.train(train_tagged, total_examples=rf_model_d2v.corpus_count, epochs=rf_model_d2v.epochs)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#Extract training vectors\n",
+    "rf_Xtrain_d2v = np.array([rf_model_d2v.docvecs[str(i)] for i in range(len(train_tagged))])\n",
+    "rf_Xtrain_d2v\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# This is for test, but for val, we would want to generate vectors for prediction\n",
+    "rf_Xval_d2v = np.array([rf_model_d2v.infer_vector(val_tagged[i][0]) for i in range(len(val_tagged))])\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#Train the Model\n",
+    "rf_d2v = RandomForestClassifier(n_estimators=, random_state=42, criterion='gini')\n",
+    "rf_d2v_model = rf_d2v.fit(rf_Xtrain_d2v, ytrain)\n",
+    "rf_d2v_train_score = rf_d2v_model.score(rf_Xtrain_d2v, ytrain)\n",
+    "rf_d2v_ypred = rf_d2v_model.predict(rf_Xval_d2v)\n",
+    "print('Testing accuracy %s' % accuracy_score(yval, rf_ypred_d2v))\n",
+    "print('Testing F1 score: {}'.format(f1_score(yval, rf_ypred_d2v, average='macro')))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# save the model to disk\n",
+    "pickle.dump(rf_d2v_model, open('../models/rf_d2v_model.sav', 'wb'))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# load the model from disk\n",
+    "#rf_d2v_model = pickle.load(open('../models/rf_d2v_model.sav', 'rb'))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#Call scoring function\n",
+    "scoring(yval, rf_ypred_d2v, 'RandomForest-D2V model', rf_d2v_train_score)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "rf_d2v_cm = pd.DataFrame(sklearn.metrics.confusion_matrix(yval, rf_d2v_ypred))\n",
+    "rf_d2v_cm"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "#### RNN Long Short-Term Memory Model - CountVectorizer"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Although the simpler models seem to do pretty well, I decided to try deep learning CNN. CNN and all deep learning neural networks are known more for sequential data, like data with time related factor or even images or text reviews that have some word meaning to it. The results are much worse performing than those simple models which is to be expected for a simple product name prediction, where words may not hold that much meaning with each other. Deep learning tends to require more computational power which means more resources. Therefore, since the results are not great, it is makes more economical sense to choose a simpler model.\n",
+    "[Deep Learning](https://towardsdatascience.com/text-classification-rnns-or-cnn-s-98c86a0dd361)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T00:58:40.090714Z",
+     "start_time": "2021-01-27T00:58:39.180119Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# tokenize \n",
+    "tokenizer = Tokenizer(num_words=5000)\n",
+    "tokenizer.fit_on_texts(Xtrain)\n",
+    "\n",
+    "X_train = tokenizer.texts_to_sequences(Xtrain)\n",
+    "X_test = tokenizer.texts_to_sequences(Xval)\n",
+    "\n",
+    "#build vocab size\n",
+    "vocab_size = len(tokenizer.word_index) + 1  # Adding 1 because of reserved 0 index\n",
+    "\n",
+    "print(Xtrain[:1])\n",
+    "print(X_train[:1])"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T00:59:51.234399Z",
+     "start_time": "2021-01-27T00:59:51.072226Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# pad to get same length for all documents/sentence\n",
+    "maxlen = 10\n",
+    "\n",
+    "X_train = pad_sequences(X_train, padding='post', maxlen=maxlen)\n",
+    "X_test = pad_sequences(X_test, padding='post', maxlen=maxlen)\n",
+    "\n",
+    "print(X_train[0, :])"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T01:03:31.125045Z",
+     "start_time": "2021-01-27T01:03:31.092729Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "#build model\n",
+    "embedding_dim = 50\n",
+    "\n",
+    "model = Sequential()\n",
+    "model.add(layers.Embedding(input_dim=vocab_size, \n",
+    "                           output_dim=embedding_dim, \n",
+    "                           input_length=maxlen))\n",
+    "model.add(layers.Flatten())\n",
+    "model.add(layers.Dense(10, activation='relu'))\n",
+    "model.add(layers.Dense(1, activation='softmax'))\n",
+    "model.compile(optimizer='adam',\n",
+    "              loss='categorical_crossentropy',\n",
+    "              metrics=['accuracy'])\n",
+    "model.summary()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T01:31:23.784775Z",
+     "start_time": "2021-01-27T01:24:38.060842Z"
+    },
+    "scrolled": true
+   },
+   "outputs": [],
+   "source": [
+    "#fit model\n",
+    "history = model.fit(X_train, ytrain,\n",
+    "                    epochs=50,\n",
+    "                    verbose=2,\n",
+    "                    validation_data=(X_test, yval),\n",
+    "                    batch_size=10)\n",
+    "loss_train, accuracy_train = model.evaluate(X_train, ytrain, verbose=2)\n",
+    "print(\"Training Accuracy: {:.4f}\".format(accuracy_train))\n",
+    "loss_val, accuracy_val = model.evaluate(X_test, yval, verbose=2)\n",
+    "print(\"Testing Accuracy:  {:.4f}\".format(accuracy_val))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T01:54:27.759630Z",
+     "start_time": "2021-01-27T01:54:27.531245Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# plot loss during training\n",
+    "plt.subplot(211)\n",
+    "plt.title('Loss')\n",
+    "plt.plot(history.history['loss'], label='train')\n",
+    "plt.plot(history.history['val_loss'], label='test')\n",
+    "plt.legend()\n",
+    "# plot accuracy during training\n",
+    "plt.subplot(212)\n",
+    "plt.title('Accuracy')\n",
+    "plt.plot(history.history['accuracy'], label='train')\n",
+    "plt.plot(history.history['val_accuracy'], label='test')\n",
+    "plt.legend()\n",
+    "plt.tight_layout(h_pad=1.05)\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T01:41:30.792027Z",
+     "start_time": "2021-01-27T01:41:30.714359Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "#try with max pooling -> like undersampling\n",
+    "embedding_dim = 50\n",
+    "\n",
+    "model = Sequential()\n",
+    "model.add(layers.Embedding(input_dim=vocab_size, \n",
+    "                           output_dim=embedding_dim, \n",
+    "                           input_length=maxlen))\n",
+    "model.add(layers.GlobalMaxPool1D())\n",
+    "model.add(layers.Dense(10, activation='relu'))\n",
+    "model.add(layers.Dense(1, activation='softmax'))\n",
+    "model.compile(optimizer='adam',\n",
+    "              loss='categorical_crossentropy',\n",
+    "              metrics=['accuracy'])\n",
+    "model.summary()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T01:47:38.321724Z",
+     "start_time": "2021-01-27T01:41:32.103240Z"
+    },
+    "scrolled": true
+   },
+   "outputs": [],
+   "source": [
+    "#fit model again\n",
+    "history = model.fit(X_train, ytrain,\n",
+    "                    epochs=50,\n",
+    "                    verbose=2,\n",
+    "                    validation_data=(X_test, yval),\n",
+    "                    batch_size=10)\n",
+    "loss_train, accuracy_train = model.evaluate(X_train, ytrain, verbose=2)\n",
+    "print(\"Training Accuracy: {:.4f}\".format(accuracy_train))\n",
+    "loss_val, accuracy_val = model.evaluate(X_test, yval, verbose=2)\n",
+    "print(\"Testing Accuracy:  {:.4f}\".format(accuracy_val))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-27T01:54:12.709217Z",
+     "start_time": "2021-01-27T01:54:12.465172Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# plot loss during training\n",
+    "plt.subplot(211)\n",
+    "plt.title('Loss')\n",
+    "plt.plot(history.history['loss'], label='train')\n",
+    "plt.plot(history.history['val_loss'], label='test')\n",
+    "plt.legend()\n",
+    "# plot accuracy during training\n",
+    "plt.subplot(212)\n",
+    "plt.title('Accuracy')\n",
+    "plt.plot(history.history['accuracy'], label='train')\n",
+    "plt.plot(history.history['val_accuracy'], label='test')\n",
+    "plt.legend()\n",
+    "plt.tight_layout(h_pad=1.05)\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Evaluation of production model"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Model Summary"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "model_df = pd.DataFrame(model_name, model_precision, model_recall, model_F1scorse, model_train,accuracy, model_test_accuracy)\n",
+    "model_df"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Try plotting all the f1 macro score and vline benchmark and baseline"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "sns.barplot(x=model_df.Accuracy, y=model_df.index, orient='h',color='lightgrey')\n",
+    "plt.vlines(x=0.13, ymin=0, ymax=2.5, colors='red', linestyles='dashed', label='baseline')\n",
+    "plt.title('Accuracy Comparison for Selected Model');"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Plotting Confusion Matrix"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Lets look at why some of the products got misclassified. Looking at the confusion matrix, most of the products were predicted into the correct class/aisles. However, there are about 20% products misclassified. Lets deep dive into the products that were misclassified quite substantially. For example, products from juice nectars got misclassified to refrigerated and vice versa quite substantially."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-23T04:56:09.746775Z",
+     "start_time": "2021-01-23T04:28:34.710Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# taking the index of validation set from main df and all the columns after it for aisles\n",
+    "benchmark_val_df = Train.loc[yval.index,:]\n",
+    "print(yval.shape)\n",
+    "print(baseline_val_df.shape)\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-23T04:56:09.749137Z",
+     "start_time": "2021-01-23T04:28:34.712Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "baseline_val_df.head(1)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-23T04:56:09.753856Z",
+     "start_time": "2021-01-23T04:28:34.715Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# dropping irrelevant columns\n",
+    "baseline_val_df.drop(columns=['aisle_id','aisle_name'],inplace=True)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-23T04:56:09.755484Z",
+     "start_time": "2021-01-23T04:28:34.717Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "baseline_val_df.head(2)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-23T04:56:09.757479Z",
+     "start_time": "2021-01-23T04:28:34.719Z"
+    },
+    "scrolled": true
+   },
+   "outputs": [],
+   "source": [
+    "# getting the aisle names of validation set to add into confusion matrix\n",
+    "aisle_names = baseline_val_df.groupby(['aisle_id'])['aisle_name'].value_counts()\n",
+    "aisle_names.index"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-23T04:56:09.761503Z",
+     "start_time": "2021-01-23T04:28:34.724Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "aislelist = []\n",
+    "for i, name in aisle_names.index:\n",
+    "    if name not in aislelist:\n",
+    "        aislelist.append(name)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-23T04:56:09.763889Z",
+     "start_time": "2021-01-23T04:28:34.726Z"
+    },
+    "scrolled": true
+   },
+   "outputs": [],
+   "source": [
+    "# list of aisles in the validation set\n",
+    "aislelist"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-23T04:56:09.766002Z",
+     "start_time": "2021-01-23T04:28:34.728Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "fig, ax = plt.subplots(figsize=(28, 28))\n",
+    "cm = plot_confusion_matrix(baseline_model,Xaisles_val_cvec,yaisles_val, ax=ax, cmap=plt.cm.Blues)\n",
+    "ax.set_xticklabels(aislelist,rotation=90)\n",
+    "ax.set_yticklabels(aislelist,rotation=0)\n",
+    "plt.show();"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-23T04:56:09.767423Z",
+     "start_time": "2021-01-23T04:28:34.731Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# Get the predicted aisles\n",
+    "baseline_val_df['pred'] = ypred_baseline"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-23T04:56:09.769591Z",
+     "start_time": "2021-01-23T04:28:34.733Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "# Get only products which got misclassified\n",
+    "baseline_misclass_df = baseline_val_df[baseline_val_df['aisle_id']!=baseline_val_df['pred']]\n",
+    "misclass = baseline_misclass_df.shape\n",
+    "val = baseline_val_df.shape"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-23T04:56:09.774519Z",
+     "start_time": "2021-01-23T04:28:34.735Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "#finding the percentage of misclassification\n",
+    "print(misclass)\n",
+    "print(val)\n",
+    "misclass[0]/val[0]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-23T04:56:09.776047Z",
+     "start_time": "2021-01-23T04:28:34.737Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "baseline_misclass_df[baseline_misclass_df['aisle_name']=='refrigerated'].head(1)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "It seems like the aisles juice nectars and refrigerated is very similar, and some misclassifications still makes sense, for example, ginger kombucha could be classified as refrigerated as well even though the actual is juice nectars whereas organic amber coconut nectar could be juice nectars even though the actual is refrigerated. However, it does seem that the product name is being classified according to the fruit name in each product name."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-23T04:56:09.777413Z",
+     "start_time": "2021-01-23T04:28:34.740Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "baseline_misclass_df[(baseline_misclass_df['aisle_name']=='juice nectars') & (baseline_misclass_df['pred']==31)]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-23T04:56:09.779768Z",
+     "start_time": "2021-01-23T04:28:34.743Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "baseline_misclass_df[(baseline_misclass_df['aisle_name']=='refrigerated') & (baseline_misclass_df['pred']==98)]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-23T04:56:09.781306Z",
+     "start_time": "2021-01-23T04:28:34.745Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "baseline_val_df[(baseline_val_df['aisle_name']=='refrigerated') & (baseline_val_df['pred']==31)].head(20)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {
+    "ExecuteTime": {
+     "end_time": "2021-01-23T04:56:09.782986Z",
+     "start_time": "2021-01-23T04:28:34.748Z"
+    }
+   },
+   "outputs": [],
+   "source": [
+    "baseline_val_df[(baseline_val_df['aisle_name']=='juice nectars') & (baseline_val_df['pred']==98)].head(20)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Could try showing t-sne on how well it was clustered"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Conclusion and Recommendation"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": []
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.8.3"
+  },
+  "toc": {
+   "base_numbering": 1,
+   "nav_menu": {},
+   "number_sections": true,
+   "sideBar": true,
+   "skip_h1_title": false,
+   "title_cell": "Table of Contents",
+   "title_sidebar": "Contents",
+   "toc_cell": false,
+   "toc_position": {
+    "height": "calc(100% - 180px)",
+    "left": "10px",
+    "top": "150px",
+    "width": "165px"
+   },
+   "toc_section_display": true,
+   "toc_window_display": true
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 4
+}
